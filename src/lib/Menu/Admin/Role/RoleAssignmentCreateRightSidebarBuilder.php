@@ -66,6 +66,7 @@ class RoleAssignmentCreateRightSidebarBuilder extends AbstractBuilder implements
                     'route' => 'ezplatform.role.view',
                     'routeParameters' => [
                         'roleId' => $role->id,
+                        '_fragment' => 'users-and-groups',
                     ],
                     'extras' => ['icon' => 'circle-close'],
                 ]
