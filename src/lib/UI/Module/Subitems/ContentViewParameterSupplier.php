@@ -12,10 +12,12 @@ use eZ\Publish\API\Repository\ContentService;
 use eZ\Publish\API\Repository\ContentTypeService;
 use eZ\Publish\API\Repository\LocationService;
 use eZ\Publish\API\Repository\PermissionResolver;
+use eZ\Publish\API\Repository\SearchService;
 use eZ\Publish\API\Repository\Values\Content\Content;
 use eZ\Publish\API\Repository\Values\Content\Location;
 use eZ\Publish\API\Repository\Values\ContentType\ContentType;
 use eZ\Publish\Core\MVC\Symfony\View\ContentView;
+use eZ\Publish\Core\Query\QueryFactoryInterface;
 use EzSystems\EzPlatformAdminUi\UI\Config\Provider\ContentTypeMappings;
 use EzSystems\EzPlatformAdminUi\UI\Module\Subitems\ValueObjectVisitor\SubitemsList as SubitemsListValueObjectVisitor;
 use EzSystems\EzPlatformAdminUi\UI\Module\Subitems\Values\SubitemsList;
@@ -63,18 +65,12 @@ class ContentViewParameterSupplier
     /** @var \EzSystems\EzPlatformUser\UserSetting\UserSettingService */
     private $userSettingService;
 
-    /**
-     * @param \EzSystems\EzPlatformRest\Output\Visitor $outputVisitor
-     * @param \EzSystems\EzPlatformRest\Output\Generator\Json $outputGenerator
-     * @param \EzSystems\EzPlatformRest\Server\Output\ValueObjectVisitor\ContentTypeInfoList $contentTypeInfoListValueObjectVisitor
-     * @param \EzSystems\EzPlatformAdminUi\UI\Module\Subitems\ValueObjectVisitor\SubitemsList $subitemsListValueObjectVisitor
-     * @param \eZ\Publish\API\Repository\LocationService $locationService
-     * @param \eZ\Publish\API\Repository\ContentService $contentService
-     * @param \eZ\Publish\API\Repository\ContentTypeService $contentTypeService
-     * @param \eZ\Publish\API\Repository\PermissionResolver $permissionResolver
-     * @param \EzSystems\EzPlatformAdminUi\UI\Config\Provider\ContentTypeMappings $contentTypeMappings
-     * @param \EzSystems\EzPlatformUser\UserSetting\UserSettingService $userSettingService
-     */
+    /** @var \eZ\Publish\Core\Query\QueryFactoryInterface */
+    private $queryFactory;
+
+    /** @var \eZ\Publish\API\Repository\SearchService */
+    private $searchService;
+
     public function __construct(
         Visitor $outputVisitor,
         JsonOutputGenerator $outputGenerator,
@@ -85,7 +81,9 @@ class ContentViewParameterSupplier
         ContentTypeService $contentTypeService,
         PermissionResolver $permissionResolver,
         ContentTypeMappings $contentTypeMappings,
-        UserSettingService $userSettingService
+        UserSettingService $userSettingService,
+        QueryFactoryInterface $queryFactory,
+        SearchService $searchService
     ) {
         $this->outputVisitor = $outputVisitor;
         $this->outputGenerator = $outputGenerator;
@@ -97,6 +95,8 @@ class ContentViewParameterSupplier
         $this->permissionResolver = $permissionResolver;
         $this->contentTypeMappings = $contentTypeMappings;
         $this->userSettingService = $userSettingService;
+        $this->queryFactory = $queryFactory;
+        $this->searchService = $searchService;
     }
 
     /**
@@ -121,12 +121,17 @@ class ContentViewParameterSupplier
         $contentTypes = [];
         $subitemsRows = [];
         $location = $view->getLocation();
-        $childrenCount = $this->locationService->getLocationChildCount($location);
-
         $subitemsLimit = (int)$this->userSettingService->getUserSetting('subitems_limit')->value;
 
-        $locationChildren = $this->locationService->loadLocationChildren($location, 0, $subitemsLimit);
-        foreach ($locationChildren->locations as $locationChild) {
+        /** @var \eZ\Publish\API\Repository\Values\Content\LocationQuery $locationChildrenQuery */
+        $locationChildrenQuery = $this->queryFactory->create('Children', ['location' => $location]);
+        $locationChildrenQuery->offset = 0;
+        $locationChildrenQuery->limit = $subitemsLimit;
+
+        $searchResult = $this->searchService->findLocations($locationChildrenQuery);
+        foreach ($searchResult->searchHits as $searchHit) {
+            /** @var \eZ\Publish\API\Repository\Values\Content\Location $locationChild */
+            $locationChild = $searchHit->valueObject;
             $contentType = $locationChild->getContent()->getContentType();
 
             if (!isset($contentTypes[$contentType->identifier])) {
@@ -136,7 +141,7 @@ class ContentViewParameterSupplier
             $subitemsRows[] = $this->createSubitemsRow($locationChild, $contentType);
         }
 
-        $subitemsList = new SubitemsList($subitemsRows, $childrenCount);
+        $subitemsList = new SubitemsList($subitemsRows, $searchResult->totalCount);
         $contentTypeInfoList = new ContentTypeInfoList($contentTypes, '');
 
         $subitemsListJson = $this->visitSubitemsList($subitemsList);
